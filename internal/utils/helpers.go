@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"strings"
 
 	"github.com/celestix/gotgproto"
 	"github.com/celestix/gotgproto/ext"
@@ -25,6 +26,22 @@ func Contains[T comparable](s []T, e T) bool {
 	}
 	return false
 }
+
+// IsClientDisconnectError checks if the error is due to client disconnecting
+// e.g. user seeking in video, stopping playback, or network issues on client side
+func IsClientDisconnectError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "connection was aborted") ||
+		strings.Contains(errStr, "connection reset by peer") ||
+		strings.Contains(errStr, "broken pipe") ||
+		strings.Contains(errStr, "forcibly closed")
+}
+
+// telegram helper functions
+// TODO: move these to a separate package if they grow too large
 
 func GetTGMessage(ctx context.Context, client *gotgproto.Client, messageID int) (*tg.Message, error) {
 	inputMessageID := tg.InputMessageClass(&tg.InputMessageID{ID: messageID})
@@ -67,7 +84,32 @@ func FileFromMedia(media tg.MessageMediaClass) (*types.File, error) {
 			MimeType: document.MimeType,
 			ID:       document.ID,
 		}, nil
-		// TODO: add photo support
+	case *tg.MessageMediaPhoto:
+		photo, ok := media.Photo.AsNotEmpty()
+		if !ok {
+			return nil, fmt.Errorf("unexpected type %T", media)
+		}
+		sizes := photo.Sizes
+		if len(sizes) == 0 {
+			return nil, errors.New("photo has no sizes")
+		}
+		photoSize := sizes[len(sizes)-1]
+		size, ok := photoSize.AsNotEmpty()
+		if !ok {
+			return nil, errors.New("photo size is empty")
+		}
+		location := new(tg.InputPhotoFileLocation)
+		location.ID = photo.GetID()
+		location.AccessHash = photo.GetAccessHash()
+		location.FileReference = photo.GetFileReference()
+		location.ThumbSize = size.GetType()
+		return &types.File{
+			Location: location,
+			FileSize: 0, // caller should judge if this is a photo or not
+			FileName: fmt.Sprintf("photo_%d.jpg", photo.GetID()),
+			MimeType: "image/jpeg",
+			ID:       photo.GetID(),
+		}, nil
 	}
 	return nil, fmt.Errorf("unexpected type %T", media)
 }
@@ -99,7 +141,6 @@ func FileFromMessage(ctx context.Context, client *gotgproto.Client, messageID in
 		return nil, err
 	}
 	return file, nil
-	// TODO: add photo support
 }
 
 func GetLogChannelPeer(ctx context.Context, api *tg.Client, peerStorage *storage.PeerStorage) (*tg.InputChannel, error) {

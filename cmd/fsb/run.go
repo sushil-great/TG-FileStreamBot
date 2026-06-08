@@ -27,37 +27,33 @@ var runCmd = &cobra.Command{
 var startTime time.Time = time.Now()
 
 func runApp(cmd *cobra.Command, args []string) {
-	utils.InitLogger()
+	// initialize logger early so config loading is logged to file
+	utils.InitLogger(false)
+	config.Load(utils.Logger, cmd)
+	// reinitialize with correct dev mode
+	utils.InitLogger(config.ValueOf.Dev)
 	log := utils.Logger
 	mainLogger := log.Named("Main")
 	mainLogger.Info("Starting server")
-	config.Load(log, cmd)
 	router := getRouter(log)
 
 	mainBot, err := bot.StartClient(log)
 	if err != nil {
-		log.Panic("Failed to start main bot", zap.Error(err))
+		log.Sugar().Fatalf("Failed to start main bot: %v", err)
 	}
 	cache.InitCache(log)
 	workers, err := bot.StartWorkers(log)
 	if err != nil {
-		log.Panic("Failed to start workers", zap.Error(err))
-		return
+		log.Sugar().Fatalf("Failed to start workers: %v", err)
 	}
 	workers.AddDefaultClient(mainBot, mainBot.Self)
 	bot.StartUserBot(log)
 	mainLogger.Info("Server started", zap.Int("port", config.ValueOf.Port))
 	mainLogger.Info("File Stream Bot", zap.String("version", versionString))
 	mainLogger.Sugar().Infof("Server is running at %s", config.ValueOf.Host)
-	publicIp, err := config.GetPublicIP()
-	if err != nil {
-		mainLogger.Debug("Failed to get public IP", zap.Error(err))
-	} else {
-		mainLogger.Info("Public IP", zap.String("ip", publicIp))
-	}
 	err = router.Run(fmt.Sprintf(":%d", config.ValueOf.Port))
 	if err != nil {
-		mainLogger.Sugar().Fatalln(err)
+		mainLogger.Sugar().Fatalf("Server failed to start: %v", err)
 	}
 }
 
